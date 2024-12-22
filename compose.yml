@@ -1,20 +1,166 @@
 services:
-  kafka:
-    image: bitnami/kafka:3.5.0
+  producer:
+    build:
+      dockerfile: Dockerfile
+      context: .
+    command: ["venv/bin/uvicorn", "faststream_bench.producer:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
-      - "9092:9092"
-      - "9093:9093"
+      - 8000:8000
     environment:
-      KAFKA_ENABLE_KRAFT: "true"
-      KAFKA_CFG_NODE_ID: "1"
-      KAFKA_CFG_PROCESS_ROLES: "broker,controller"
-      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
-      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
-      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:9092"
-      KAFKA_BROKER_ID: "1"
-      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@localhost:9093"
-      ALLOW_PLAINTEXT_LISTENER: "true"
-    # https://semgrep.dev/r?q=yaml.docker-compose.security.no-new-privileges.no-new-privileges
-    security_opt:
-      - no-new-privileges:true
+      KAFKA_HOSTS: kafka-1:29092,kafka-2:29093,kafka-3:29094
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+
+  consumer-with-polling:
+    build:
+      dockerfile: Dockerfile
+      context: .
+      args:
+        - faststream_package=dist/non-blocking-polling/faststream-0.5.33-py3-none-any.whl
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+        reservations:
+          cpus: '1'
+    environment:
+      KAFKA_HOSTS: kafka-1:29092,kafka-2:29093,kafka-3:29094
+      GROUP_ID: polling
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+
+  consumer-separate-thread:
+    build:
+      dockerfile: Dockerfile
+      context: .
+      args:
+        - faststream_package=dist/separate-thread/faststream-0.5.33-py3-none-any.whl
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+        reservations:
+          cpus: '1'
+    environment:
+      KAFKA_HOSTS: kafka-1:29092,kafka-2:29093,kafka-3:29094
+      GROUP_ID: thread-pool
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - 1010:9090
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.7.0
+    ports:
+      - 2181:2181
+    healthcheck:
+      test: echo stat | nc localhost 2181
+      interval: 10s
+      timeout: 10s
+      retries: 3
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka-1:
+    image: confluentinc/cp-kafka:7.7.0
+    ports:
+      - 9092:9092
+    healthcheck:
+      test: nc -z localhost 9092 || exit -1
+      start_period: 5s
+      interval: 5s
+      timeout: 10s
+      retries: 10
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: LISTENER_DOCKER_INTERNAL://kafka-1:29092,LISTENER_DOCKER_EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: LISTENER_DOCKER_INTERNAL:PLAINTEXT,LISTENER_DOCKER_EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: LISTENER_DOCKER_INTERNAL
+      KAFKA_LOG4J_ROOT_LOGLEVEL: ERROR
+      KAFKA_CONFLUENT_SUPPORT_METRICS_ENABLE: false
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: true
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  kafka-2:
+    image: confluentinc/cp-kafka:7.7.0
+    ports:
+      - 9093:9093
+    healthcheck:
+      test: nc -z localhost 9093 || exit -1
+      start_period: 5s
+      interval: 5s
+      timeout: 10s
+      retries: 10
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: LISTENER_DOCKER_INTERNAL://kafka-2:29093,LISTENER_DOCKER_EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: LISTENER_DOCKER_INTERNAL:PLAINTEXT,LISTENER_DOCKER_EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: LISTENER_DOCKER_INTERNAL
+      KAFKA_LOG4J_ROOT_LOGLEVEL: ERROR
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: true
+      KAFKA_CONFLUENT_SUPPORT_METRICS_ENABLE: false
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  kafka-3:
+    image: confluentinc/cp-kafka:7.7.0
+    ports:
+      - "9094:9094"
+    healthcheck:
+      test: nc -z localhost 9094 || exit -1
+      start_period: 5s
+      interval: 5s
+      timeout: 10s
+      retries: 10
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: LISTENER_DOCKER_INTERNAL://kafka-3:29094,LISTENER_DOCKER_EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: LISTENER_DOCKER_INTERNAL:PLAINTEXT,LISTENER_DOCKER_EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: LISTENER_DOCKER_INTERNAL
+      KAFKA_LOG4J_ROOT_LOGLEVEL: ERROR
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: true
+      KAFKA_CONFLUENT_SUPPORT_METRICS_ENABLE: false
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  kafka-console:
+    image: redpandadata/console:latest
+    ports:
+      - "9090:8080"
+    environment:
+      KAFKA_BROKERS: kafka-1:29092,kafka-2:29093,kafka-3:29094
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy

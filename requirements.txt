@@ -1,0 +1,9 @@
+uvicorn[standard]
+fastapi
+confluent-kafka
+prometheus-client
+aiomisc
+asgiref
+psutil
+pydantic
+pydantic-settings

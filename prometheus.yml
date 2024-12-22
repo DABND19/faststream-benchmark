@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 2s
+  scrape_timeout: 2s
+  evaluation_interval: 1s
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: 
+        - "localhost:9090"
+  - job_name: "consumer-separate-thread"
+    static_configs:
+      - targets: 
+        - "consumer-separate-thread:8001"
+  - job_name: "consumer-with-polling"
+    static_configs:
+      - targets: 
+        - "consumer-with-polling:8001"
